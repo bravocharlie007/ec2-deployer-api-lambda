@@ -170,6 +170,21 @@ The Lambda function requires the following IAM permissions:
 - **Memory**: 128MB+ (recommended)
 - **Timeout**: 30+ seconds (for EC2 API calls)
 
+### Application Load Balancer Integration
+This Lambda function is specifically designed to receive events from an Application Load Balancer (ALB):
+
+```python
+# Configured for ALB events in Ec2DeployerController.py
+app = ApiGatewayResolver(proxy_type=ProxyEventType.ALBEvent)
+```
+
+**ALB Requirements:**
+- ALB must be configured with Lambda target
+- Health check endpoint: `/deployer/v1/instances/ping`
+- Request routing to Lambda function
+- Proper security group configuration allowing HTTP/HTTPS traffic
+- SSL termination at ALB (recommended for production)
+
 ### Environment Setup
 The application expects AWS credentials to be configured, either through:
 - Lambda execution role (recommended for production)
@@ -217,14 +232,158 @@ The application expects AWS credentials to be configured, either through:
    - No persistent logging of instance creation events
    - **Recommendation**: Implement CloudTrail and persistent audit logs
 
-## Workspace Dependencies
+## Workspace Dependencies and Infrastructure Order
 
-This appears to be a standalone Lambda function without explicit workspace dependencies. However, it integrates with:
+### Current State Analysis
+After reviewing the available repositories in the bravocharlie007 organization, this appears to be a **standalone Lambda function** that currently handles only the EC2 deployment API layer. The related infrastructure components mentioned (compute, vpc, nlb/alb) are not found as separate repositories in the current GitHub organization.
 
-- **AWS EC2 Service**: Core dependency for instance management
-- **AWS CloudWatch**: For logging (via Lambda Powertools)
+### Missing Infrastructure Components
+Based on the problem statement, the following components should exist but are not accessible:
+- **Compute Repository**: Handles NLB/ALB infrastructure provisioning
+- **VPC Repository**: Manages network infrastructure and VPC configuration
+- **Current Repository (ec2-deployer-api-lambda)**: Provides the API layer for EC2 instance management
+
+### Recommended Workspace Structure
+For a complete infrastructure deployment, the following repository structure is recommended:
+
+```
+Infrastructure Workspace (Multi-Repository)
+├── vpc-infrastructure/           ← VPC, subnets, routing, security groups
+├── compute-infrastructure/       ← ALB/NLB, target groups, listeners
+├── ec2-deployer-api-lambda/     ← API Lambda function (this repository)
+└── deployment-orchestration/     ← Terraform/CloudFormation orchestration
+```
+
+### Deployment Order of Operations
+When all workspace components are available, follow this deployment sequence:
+
+#### Phase 1: Foundation Infrastructure
+1. **VPC Repository** (Deploy First)
+   - VPC creation with CIDR blocks
+   - Public/Private subnets across AZs
+   - Internet Gateway and NAT Gateways
+   - Route Tables and routing rules
+   - Security Groups and NACLs
+   - VPC Endpoints (if needed)
+
+#### Phase 2: Load Balancer Infrastructure  
+2. **Compute Repository** (Deploy Second)
+   - Application Load Balancer (ALB) creation
+   - Target Groups configuration
+   - Listeners and routing rules
+   - SSL/TLS certificates (ACM)
+   - Security Groups for ALB
+   - Health check configuration
+
+#### Phase 3: Application Layer
+3. **EC2 Deployer API Lambda** (Deploy Third - This Repository)
+   - Lambda function deployment
+   - Lambda execution role and policies
+   - ALB target group registration
+   - API Gateway integration (if used)
+   - CloudWatch log groups
+   - X-Ray tracing configuration
+
+#### Phase 4: Integration Testing
+4. **End-to-End Validation**
+   - ALB health check validation
+   - API endpoint accessibility testing
+   - EC2 instance launching verification
+   - Security group and network connectivity testing
+
+### Dependencies and Outputs
+Each workspace component should export necessary values for downstream dependencies:
+
+**VPC Repository Outputs:**
+- VPC ID
+- Public/Private Subnet IDs
+- Security Group IDs
+- Route Table IDs
+
+**Compute Repository Outputs:**
+- ALB ARN and DNS name
+- Target Group ARNs
+- Listener ARNs
+- ALB Security Group IDs
+
+**Current Repository Dependencies:**
+- VPC outputs for Lambda deployment
+- ALB outputs for event source configuration
+- Appropriate IAM permissions for EC2 operations
+
+### Current Integration Status
+This repository currently integrates with:
+
+- **AWS EC2 Service**: Direct API calls for instance management
+- **Application Load Balancer**: Configured as event source (ProxyEventType.ALBEvent)
+- **AWS CloudWatch**: For logging via Lambda Powertools
 - **AWS X-Ray**: For distributed tracing (configured but may need enabling)
-- **Application Load Balancer**: For HTTP request routing
+
+### Infrastructure Deployment Notes
+⚠️ **Important**: The infrastructure components (VPC, ALB/NLB) referenced in the problem statement are not currently accessible for review. This may indicate:
+- Components exist in a different GitHub organization
+- Infrastructure managed through different tools (Terraform Cloud, AWS CDK, etc.)
+- Components are private repositories requiring different access permissions
+- Infrastructure provisioned manually or through AWS Console
+
+## Potential Code Changes When Integrating with Other Workspaces
+
+### VPC Integration Considerations
+When the VPC repository is available, consider these modifications:
+
+1. **Subnet Selection Logic** (`Ec2DeployerService.py`):
+   - Add subnet ID parameter to instance launch requests
+   - Implement subnet selection based on availability zones
+   - Add VPC security group assignments
+
+2. **Security Group Management**:
+   - Reference VPC-managed security groups instead of defaults
+   - Implement security group validation logic
+
+### ALB/NLB Integration Considerations  
+When the compute repository is available, potential changes include:
+
+1. **Health Check Endpoint Enhancement**:
+   - Add more comprehensive health checks
+   - Include dependency validation (EC2 service, IAM permissions)
+   - Add load balancer-specific health metrics
+
+2. **Request Routing Optimization**:
+   - Optimize for ALB event processing
+   - Add proper error handling for ALB-specific scenarios
+   - Implement request/response transformation if needed
+
+3. **Target Group Integration**:
+   - Add logic for dynamic target group registration if creating instances that need ALB registration
+   - Implement health check configurations for launched instances
+
+### Configuration Management
+When all repositories are integrated:
+
+1. **Environment-Specific Configuration**:
+   - Replace hardcoded values in `Constants.py` with environment variables
+   - Implement parameter store or secrets manager integration
+   - Add environment-specific AWS profiles or IAM roles
+
+2. **Cross-Repository Communication**:
+   - Implement shared configuration management
+   - Add service discovery mechanisms
+   - Establish inter-service authentication patterns
+
+### Rationale for Changes
+Each modification addresses specific integration points:
+- **VPC changes**: Enable proper network isolation and security
+- **ALB changes**: Optimize load balancer integration and routing
+- **Configuration changes**: Support multiple environments and reduce hardcoded values
+- **Communication changes**: Enable secure and reliable inter-service communication
+
+### Recommendations for Complete Implementation
+1. **Create Missing Repositories**: Establish the vpc-infrastructure and compute-infrastructure repositories
+2. **Implement Infrastructure as Code**: Use Terraform or CloudFormation for consistent deployments
+3. **Establish CI/CD Pipeline**: Automate the deployment order across all workspaces
+4. **Add Integration Tests**: Validate cross-workspace dependencies
+5. **Document Inter-Repository Dependencies**: Clearly specify required outputs and inputs
+6. **Review Security Configurations**: Ensure proper IAM roles, security groups, and network ACLs across all workspaces
 
 ## Usage Examples
 
