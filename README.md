@@ -102,6 +102,65 @@ POST /deployer/v1/instances
 }
 ```
 
+### 🎮 Gaming Security Endpoints (New)
+
+#### Get Client IP
+```http
+GET /deployer/v1/instances/gaming/my-ip
+```
+Returns the client's current IP address for whitelisting purposes.
+
+**Response:**
+```json
+{
+  "client_ip": "203.0.113.1",
+  "message": "Use this IP address for gaming access whitelisting"
+}
+```
+
+#### Whitelist IP for Gaming Access
+```http
+POST /deployer/v1/instances/gaming/whitelist-ip
+```
+Allows users to dynamically whitelist their IP for secure gaming access.
+
+**Request Body:**
+```json
+{
+  "userName": "brother1",
+  "ipAddress": "203.0.113.1",
+  "durationHours": 24,
+  "protocols": ["ssh", "rdp", "gaming_steam"],
+  "description": "Gaming session access"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "ip_address": "203.0.113.1",
+  "user_name": "brother1", 
+  "rules_added": [
+    {
+      "rule_id": "sg-abc123:22:203_0_113_1_32",
+      "protocol": "ssh",
+      "port": 22,
+      "expires_at": "2024-01-02T12:00:00"
+    }
+  ],
+  "expires_in_hours": 24
+}
+```
+
+**Supported Protocols:**
+- `ssh`: SSH access (port 22)
+- `rdp`: Remote Desktop Protocol (port 3389)
+- `gaming_steam`: Steam Remote Play (port 27036)
+- `vnc`: VNC remote desktop (port 5900)
+- `custom_game_tcp`: Custom TCP gaming (port 7777)
+- `custom_game_udp`: Custom UDP gaming (port 7777)
+
 ## Dependencies
 
 ### Core Dependencies
@@ -193,44 +252,114 @@ The application expects AWS credentials to be configured, either through:
 
 ## Security Considerations & Concerns
 
-⚠️ **CRITICAL SECURITY ISSUES IDENTIFIED:**
+⚠️ **CRITICAL SECURITY ISSUES IDENTIFIED IN INFRASTRUCTURE:**
 
-1. **Authentication/Authorization Missing**
-   - No visible authentication mechanism
-   - Any client with network access can launch EC2 instances
-   - **Recommendation**: Implement API Gateway with authentication (API keys, IAM, Cognito)
+### Current Issues in Compute Repository:
+1. **SSH Wide Open to Internet**
+   - Security group allows `cidr_blocks = ["0.0.0.0/0"]` on port 22
+   - Anyone on internet can attempt SSH brute force attacks
+   - **Status**: 🚨 **CRITICAL - IMMEDIATE ACTION REQUIRED**
 
-2. **Hardcoded AWS Profile**
-   - AWS profile "CharlesIC" is hardcoded in `Constants.py`
-   - **Recommendation**: Use Lambda execution roles instead of profiles
+2. **Password Authentication Enabled**
+   - User data script enables SSH password authentication
+   - Vulnerable to brute force and credential attacks
+   - **Status**: 🚨 **CRITICAL - IMMEDIATE ACTION REQUIRED**
 
-3. **User Quota Not Enforced**
-   - Code sets `current_user_number = 0` without actual user tracking
-   - Quota validation is bypassed
-   - **Recommendation**: Implement proper user tracking (DynamoDB, RDS)
+3. **No Gaming Protocol Security**
+   - Missing security groups for RDP (3389), VNC (5900), gaming ports
+   - No controlled access for gaming-specific protocols
+   - **Status**: ⚠️ **HIGH PRIORITY**
 
-4. **Input Validation Insufficient**
-   - Minimal validation beyond Pydantic model parsing
-   - No validation of AMI IDs, instance types, or user names
-   - **Recommendation**: Add comprehensive input validation
+4. **Missing Gaming Access Control**
+   - No mechanism for brothers to securely whitelist their IPs
+   - No temporary access controls or expiration
+   - **Status**: ⚠️ **HIGH PRIORITY**
 
-5. **No Rate Limiting**
-   - No protection against abuse or excessive requests
-   - **Recommendation**: Implement API Gateway throttling
+### 🛡️ **SECURITY ENHANCEMENTS IMPLEMENTED:**
 
-6. **Sensitive Data Exposure**
-   - Full AWS API responses returned to clients
-   - May expose sensitive instance metadata
-   - **Recommendation**: Filter response data
+#### Dynamic IP Whitelisting System
+- **New API endpoints** for secure gaming access management
+- **Automatic IP detection** from ALB forwarded headers
+- **Temporary access rules** with configurable expiration (default 24 hours)
+- **Protocol-specific access** (SSH, RDP, Steam, VNC, custom gaming ports)
+- **User identification** and audit trail for all access requests
 
-7. **Error Information Disclosure**
-   - Detailed exception information returned to clients
-   - May reveal system internals
-   - **Recommendation**: Return generic error messages to clients
+#### Gaming Security Architecture
+```
+Brother's Device → ALB → Lambda API → Security Group Rules → Gaming Instance
+                    ↓
+               IP Detection & Validation → Temporary Access (24h)
+```
 
-8. **No Audit Trail**
-   - No persistent logging of instance creation events
-   - **Recommendation**: Implement CloudTrail and persistent audit logs
+#### Secure Gaming Access Workflow:
+1. **Brother checks IP**: `GET /gaming/my-ip` to see current IP address
+2. **Request access**: `POST /gaming/whitelist-ip` with user details and protocols needed
+3. **Lambda validates**: IP address format, user authorization, protocol support
+4. **Security group updated**: Temporary rules added for specific IP and protocols
+5. **Gaming access granted**: Brother can connect via SSH, RDP, or gaming protocols
+6. **Auto-expiration**: Rules automatically expire after specified duration
+
+### Additional Security Recommendations:
+
+#### For Compute Repository (High Priority):
+```terraform
+# REPLACE current EC2 security group SSH rule:
+# OLD (INSECURE):
+ingress {
+  from_port   = 22
+  to_port     = 22
+  protocol    = "tcp"
+  cidr_blocks = ["0.0.0.0/0"]  # ❌ REMOVE THIS
+}
+
+# NEW (SECURE):
+ingress {
+  description     = "SSH from dynamic gaming access only"
+  from_port       = 22
+  to_port         = 22
+  protocol        = "tcp"
+  security_groups = [aws_security_group.gaming_access_sg.id]  # ✅ SG-to-SG only
+}
+```
+
+#### For User Data Script (High Priority):
+```bash
+# REPLACE password authentication:
+# OLD (INSECURE):
+sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+
+# NEW (SECURE):
+sed -i 's/^PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+# Rely on key-based authentication only
+```
+
+### Gaming-Specific Security Features:
+
+1. **Multi-Protocol Support**: SSH (22), RDP (3389), Steam Remote Play (27036), VNC (5900), custom gaming ports
+2. **Temporary Access**: All gaming access rules expire automatically to limit exposure window
+3. **IP Validation**: Robust IP address validation before security group modifications
+4. **User Tracking**: Each access request tied to user identity for audit purposes
+5. **Auto-Detection**: Lambda automatically detects client IP from ALB forwarded headers
+
+### Lambda Security Enhancements:
+- **Input validation** for all gaming access requests
+- **IP address parsing** and CIDR validation
+- **Security group management** with proper error handling
+- **Audit logging** for all security modifications
+- **Graceful failure handling** with detailed error responses
+
+### Files Added for Security:
+- `src/service/SecurityService.py` - Gaming access control service
+- `src/model/IpWhitelistRequestModel.py` - Request validation model
+- `terraform-security-enhancements/` - Terraform security configurations
+- Enhanced controller endpoints for gaming access management
+
+⚠️ **IMMEDIATE ACTIONS REQUIRED:**
+1. **Update compute repository** security groups to remove `0.0.0.0/0` SSH access
+2. **Deploy enhanced security groups** from `terraform-security-enhancements/`
+3. **Update user data scripts** to disable password authentication
+4. **Test gaming access workflow** with brothers using new API endpoints
+5. **Monitor and audit** gaming access logs for security incidents
 
 ## Workspace Dependencies and Infrastructure Order
 

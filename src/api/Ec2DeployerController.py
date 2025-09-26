@@ -1,7 +1,9 @@
 from logger.Ec2DeployerLogger import logger
 from service.Ec2DeployerService import Ec2DeployerService
+from service.SecurityService import SecurityService
 from util import Constants
 from model.InstancePaveRequestModel import InstancePaveRequestModel
+from model.IpWhitelistRequestModel import IpWhitelistRequestModel
 from exception.Ec2DeployerErrors import Ec2DeployerUserMaxInstanceQuotaExceededException
 from util.Ec2DeployerUtils import Ec2DeployerUtils
 from aws_lambda_powertools.event_handler.api_gateway import ApiGatewayResolver, ProxyEventType, Response
@@ -44,6 +46,48 @@ class Ec2DeployerController:
         ec2_deployer_pave_request_model: InstancePaveRequestModel = parse(event=json_body, model=InstancePaveRequestModel)
 
         return Ec2DeployerController.getResponse(ec2_deployer_service.launch_ec2_instance, 202, ec2_deployer_pave_request_model, ec2_deployer_pave_request_id)
+
+    @app.post(Constants.EC2_DEPLOYER_PATH_PREFIX + '/gaming/whitelist-ip')
+    def whitelist_gaming_ip():
+        """
+        Allow brothers to whitelist their IPs for gaming access
+        """
+        logger.info("Inside Ec2DeployerController whitelist_gaming_ip")
+        security_service = SecurityService()
+        
+        json_body = app.current_event.json_body
+        
+        # Auto-detect client IP if not provided
+        if 'ipAddress' not in json_body or not json_body['ipAddress']:
+            client_ip = security_service.get_current_client_ip(app.current_event.raw_event)
+            if client_ip:
+                json_body['ipAddress'] = client_ip
+                logger.info(f"Auto-detected client IP: {client_ip}")
+        
+        ip_whitelist_request: IpWhitelistRequestModel = parse(event=json_body, model=IpWhitelistRequestModel)
+        
+        return Ec2DeployerController.getResponse(security_service.whitelist_gaming_access, 200, ip_whitelist_request)
+
+    @app.get(Constants.EC2_DEPLOYER_PATH_PREFIX + '/gaming/my-ip')
+    def get_client_ip():
+        """
+        Return the client's IP address for gaming access whitelisting
+        """
+        logger.info("Inside Ec2DeployerController get_client_ip")
+        security_service = SecurityService()
+        
+        client_ip = security_service.get_current_client_ip(app.current_event.raw_event)
+        
+        response_body = {
+            'client_ip': client_ip,
+            'message': 'Use this IP address for gaming access whitelisting'
+        }
+        
+        return Response(
+            status_code=200,
+            content_type="application/json", 
+            body=json.dumps(response_body)
+        )
 
 
     def getResponse(func, status_code, *args):
