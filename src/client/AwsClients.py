@@ -8,8 +8,9 @@ class Ec2Client:
 
     def __init__(self):
         logger.info('Initialized EC2 client')
-        boto3.setup_default_session(profile_name=Constants.EC2_PROFILE)
-        self.ec2_client = boto3.client('ec2')
+        # SECURITY FIX: Use Lambda execution role instead of hardcoded profile
+        # boto3.setup_default_session(profile_name=Constants.EC2_PROFILE)  # REMOVED
+        self.ec2_client = boto3.client('ec2')  # Uses Lambda execution role automatically
 
 
     @Ec2DeployerUtils.debug_log
